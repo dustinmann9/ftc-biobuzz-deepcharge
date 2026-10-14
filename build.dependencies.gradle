@@ -1,7 +1,9 @@
 repositories {
     mavenCentral()
-    maven { url 'https://repo.dairy.foundation/releases/'}
     google() // Needed for androidx
+
+    maven { url = "https://mymaven.bylazar.com/releases" } // Panels (dashboard)
+    maven { url = "https://repo.dairy.foundation/releases/" } // kept from the official Pedro 3 Quickstart
 }
 
 dependencies {
@@ -17,4 +19,8 @@ dependencies {
 
     implementation 'com.pedropathing:revhub:3.0.1'
     implementation 'com.pedropathing:tuning:1.0.1'
+    implementation 'com.pedropathing.ivy:pedro:1.1.1'
+
+    // Panels: telemetry, field, gamepad, @Configurable live tuning
+    implementation 'com.bylazar:fullpanels:1.0.17'
 }
