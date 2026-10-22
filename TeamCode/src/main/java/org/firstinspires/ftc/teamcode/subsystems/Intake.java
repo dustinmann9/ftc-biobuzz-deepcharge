@@ -9,23 +9,23 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.teamcode.lib.Dashboard;
 
 /**
- * PLACEHOLDER -- no intake on the robot yet.
+ * Intake: one motor, plus an optional second one (e.g. a top and bottom roller).
  *
- * While ENABLED is false this never touches the hardware map, so the OpMode runs on a bare
- * chassis. The state still changes when the driver presses buttons and shows on the
- * dashboard, so the controls can be practised now.
+ * Devices are looked up with tryGet(), so a robot without an intake still runs -- the
+ * dashboard shows MISSING instead of crashing. That lets the same code run on every robot.
+ * The second motor is optional: if "intake2" isn't in the config it is simply not used.
  *
- * When the intake is built: add a motor named HARDWARE_NAME to the robot config, set
- * ENABLED = true here, and set the direction. If ENABLED is true but the motor is missing
- * from the config, the dashboard says so instead of crashing.
+ * Names must match the Driver Station robot configuration exactly (case-sensitive).
  */
 @Configurable
 public class Intake implements Subsystem {
 
-    /** Read once at init. Changing it in Panels mid-run has no effect until the next init. */
-    public static boolean ENABLED = false;
-    public static String HARDWARE_NAME = "intake";
+    /** Read once at init. false = never touch the hardware (pure placeholder). */
+    public static boolean ENABLED = true;
+    public static String MOTOR_NAME = "intake";
+    public static String MOTOR_2_NAME = "intake2";
     public static boolean REVERSED = false;
+    public static boolean REVERSED_2 = false;
 
     // Live-editable in Panels.
     public static double INTAKE_POWER = 0.8;
@@ -33,20 +33,33 @@ public class Intake implements Subsystem {
 
     public enum State { OFF, INTAKE, EJECT }
 
-    private final DcMotorEx motor;   // null on a bare chassis
+    private final DcMotorEx motor;    // null if missing
+    private final DcMotorEx motor2;   // null if missing or not fitted
     private final String status;
     private State state = State.OFF;
 
     public Intake(HardwareMap hardwareMap) {
-        motor = ENABLED ? hardwareMap.tryGet(DcMotorEx.class, HARDWARE_NAME) : null;
-        if (motor != null) {
-            motor.setDirection(REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
-            motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-            motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        motor = ENABLED ? hardwareMap.tryGet(DcMotorEx.class, MOTOR_NAME) : null;
+        motor2 = ENABLED ? hardwareMap.tryGet(DcMotorEx.class, MOTOR_2_NAME) : null;
+        setUp(motor, REVERSED);
+        setUp(motor2, REVERSED_2);
+
+        if (!ENABLED) {
+            status = "disabled";
+        } else if (motor == null) {
+            status = "MISSING '" + MOTOR_NAME + "' in robot config";
+        } else {
+            status = motor2 == null ? "active (1 motor)" : "active (2 motors)";
         }
-        status = !ENABLED ? "placeholder (disabled)"
-                : motor == null ? "MISSING '" + HARDWARE_NAME + "' in robot config"
-                : "active";
+    }
+
+    private static void setUp(DcMotorEx m, boolean reversed) {
+        if (m == null) {
+            return;
+        }
+        m.setDirection(reversed ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        m.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        m.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
     }
 
     public void setState(State state) {
@@ -59,13 +72,17 @@ public class Intake implements Subsystem {
 
     @Override
     public void update() {
-        if (motor == null) {
-            return;
-        }
+        double power;
         switch (state) {
-            case INTAKE: motor.setPower(INTAKE_POWER); break;
-            case EJECT:  motor.setPower(EJECT_POWER);  break;
-            default:     motor.setPower(0);            break;
+            case INTAKE: power = INTAKE_POWER; break;
+            case EJECT:  power = EJECT_POWER;  break;
+            default:     power = 0;            break;
+        }
+        if (motor != null) {
+            motor.setPower(power);
+        }
+        if (motor2 != null) {
+            motor2.setPower(power);
         }
     }
 

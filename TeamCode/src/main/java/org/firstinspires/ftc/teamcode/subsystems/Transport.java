@@ -8,37 +8,59 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.teamcode.lib.Dashboard;
 
 /**
- * PLACEHOLDER -- no transport on the robot yet. Moves game pieces from the intake to the
- * shooter. Written for a continuous-rotation servo; swap to a DcMotorEx if you build it with
- * a motor -- nothing outside this file needs to change.
+ * Transport: two continuous-rotation servos that carry pieces from the intake into the
+ * flywheel. Configure them on the Driver Station as "Continuous Rotation Servo", NOT "Servo".
  *
- * Same rules as Intake: ENABLED = false never touches hardware, a missing device is reported
- * instead of crashing.
+ * Set each side so both push balls toward the shooter (checked on this robot: both REVERSED).
+ * If pieces get pushed the wrong way by one side, flip that side's REVERSED flag.
+ *
+ * Missing servos are reported on the dashboard, never a crash.
  */
 @Configurable
 public class Transport implements Subsystem {
 
-    public static boolean ENABLED = false;
-    public static String HARDWARE_NAME = "transport";
-    public static boolean REVERSED = false;
+    public static boolean ENABLED = true;
+    public static String LEFT_NAME = "transportLeft";
+    public static String RIGHT_NAME = "transportRight";
+    public static boolean LEFT_REVERSED = true;
+    public static boolean RIGHT_REVERSED = true;
 
     public static double FEED_POWER = 1.0;
     public static double REVERSE_POWER = -0.6;
+    /**
+     * true = also run while the intake is on, carrying balls up to the closed shooter gate,
+     * where they wait. Right for a robot WITH a gate.
+     * false = only run while firing (and ejecting). Use this if there is NO gate, otherwise
+     * balls are shot as soon as they're picked up.
+     */
+    public static boolean RUN_WITH_INTAKE = true;
 
     public enum State { OFF, FEED, REVERSE }
 
-    private final CRServo servo;
+    private final CRServo left;
+    private final CRServo right;
     private final String status;
     private State state = State.OFF;
+    private boolean rightStopped = false;
 
     public Transport(HardwareMap hardwareMap) {
-        servo = ENABLED ? hardwareMap.tryGet(CRServo.class, HARDWARE_NAME) : null;
-        if (servo != null) {
-            servo.setDirection(REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        left = ENABLED ? hardwareMap.tryGet(CRServo.class, LEFT_NAME) : null;
+        right = ENABLED ? hardwareMap.tryGet(CRServo.class, RIGHT_NAME) : null;
+        if (left != null) {
+            left.setDirection(LEFT_REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
         }
-        status = !ENABLED ? "placeholder (disabled)"
-                : servo == null ? "MISSING '" + HARDWARE_NAME + "' in robot config"
-                : "active";
+        if (right != null) {
+            right.setDirection(RIGHT_REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        }
+
+        if (!ENABLED) {
+            status = "disabled";
+        } else if (left == null || right == null) {
+            status = "MISSING" + (left == null ? " '" + LEFT_NAME + "'" : "")
+                    + (right == null ? " '" + RIGHT_NAME + "'" : "") + " in robot config";
+        } else {
+            status = "active";
+        }
     }
 
     public void setState(State state) {
@@ -49,27 +71,40 @@ public class Transport implements Subsystem {
         return state;
     }
 
+    /**
+     * true = the right servo stays still whatever the state, so balls wait in the transport
+     * (used by auto while the flywheel spins up). TeleOp never sets this.
+     */
+    public void setRightStopped(boolean stopped) {
+        this.rightStopped = stopped;
+    }
+
     @Override
     public void update() {
-        if (servo == null) {
-            return;
-        }
+        double power;
         switch (state) {
-            case FEED:    servo.setPower(FEED_POWER);    break;
-            case REVERSE: servo.setPower(REVERSE_POWER); break;
-            default:      servo.setPower(0);             break;
+            case FEED:    power = FEED_POWER;    break;
+            case REVERSE: power = REVERSE_POWER; break;
+            default:      power = 0;             break;
+        }
+        if (left != null) {
+            left.setPower(power);
+        }
+        if (right != null) {
+            right.setPower(rightStopped ? 0 : power);
         }
     }
 
     @Override
     public void report(Dashboard dashboard) {
         dashboard.section("TRANSPORT");
-        dashboard.addData("Transport", state + "  [" + status + "]");
+        dashboard.addData("Transport", state + (rightStopped ? " (right held)" : "") + "  [" + status + "]");
     }
 
     @Override
     public void stop() {
         state = State.OFF;
+        rightStopped = false;
         update();
     }
 }

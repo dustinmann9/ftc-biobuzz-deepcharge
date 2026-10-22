@@ -27,12 +27,14 @@ import org.firstinspires.ftc.teamcode.subsystems.Transport;
  *   A                 make the way the robot faces now the new "forward"
  *   BACK              switch field-centric / robot-centric
  *   B                 hold to lock in place (Pedro: holds position; backup: brakes)
- *   X                 backup only: switch BRAKE / COAST
  *   Y                 backup only: switch velocity / raw power (needs drive encoders!)
- *   D-pad Up          toggle intake (+ transport)
- *   D-pad Down        hold to eject (intake and transport backwards)
- *   D-pad Left        toggle shooter flywheel
- *   right bumper      hold to fire (only feeds once the flywheel is at speed)
+ *   right bumper      toggle intake + transport (keeps running until pressed again)
+ *   left bumper       hold to unjam (intake and transport backwards)
+ *   D-pad Up          start shooter flywheel
+ *   D-pad Down        stop shooter flywheel
+ *   X (hold)          shoot: gate + transport feed balls into the flywheel (no speed check)
+ *
+ * Brake/coast is START_IN_BRAKE_MODE in Panels (DirectMecanumDrive); X is the gate now.
  */
 public abstract class BioBuzzTeleOpBase extends LinearOpMode {
 
@@ -58,13 +60,13 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
     private final Button resetForward   = buttons.add(() -> pad.a);
     private final Button toggleCentric  = buttons.add(() -> pad.back);
     private final Button lockPosition   = buttons.add(() -> pad.b);
-    private final Button brakeMode      = buttons.add(() -> pad.x);
     private final Button velocityMode   = buttons.add(() -> pad.y);
 
-    private final Button intakeOn       = buttons.toggle(() -> pad.dpad_up);
-    private final Button eject          = buttons.add(() -> pad.dpad_down);
-    private final Button flywheelOn     = buttons.toggle(() -> pad.dpad_left);
-    private final Button fire           = buttons.add(() -> pad.right_bumper);
+    private final Button intakeOn       = buttons.toggle(() -> pad.right_bumper);
+    private final Button eject          = buttons.add(() -> pad.left_bumper);
+    private final Button shooterStart   = buttons.add(() -> pad.dpad_up);
+    private final Button shooterStop    = buttons.add(() -> pad.dpad_down);
+    private final Button shoot          = buttons.add(() -> pad.x);
 
     @Override
     public void runOpMode() {
@@ -115,9 +117,6 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
         if (resetForward.pressed()) {
             driverForwardHeading = drive.heading();
         }
-        if (brakeMode.pressed()) {
-            drive.toggleBrakeMode();
-        }
         if (velocityMode.pressed()) {
             drive.toggleVelocityMode();
         }
@@ -163,13 +162,19 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
             transport.setState(Transport.State.REVERSE);
         } else {
             intake.setState(intakeOn.isOn() ? Intake.State.INTAKE : Intake.State.OFF);
-            // The transport runs while intaking or firing, so pieces keep moving to the shooter.
-            boolean feed = intakeOn.isOn() || shooter.isFiring();
+            // The transport runs while shooting, pushing balls into the spinning gate. With
+            // RUN_WITH_INTAKE it also runs while intaking, carrying balls up to the stopped gate.
+            boolean feed = shoot.down() || (intakeOn.isOn() && Transport.RUN_WITH_INTAKE);
             transport.setState(feed ? Transport.State.FEED : Transport.State.OFF);
         }
 
-        shooter.setSpinning(flywheelOn.isOn());
-        shooter.setFire(fire.down());
+        if (shooterStart.pressed()) {
+            shooter.setSpinning(true);
+        } else if (shooterStop.pressed()) {
+            shooter.setSpinning(false);
+        }
+        // Held X spins the gate whatever the flywheel speed (the driver's choice).
+        shooter.setGateTestOpen(shoot.down());
 
         intake.update();
         transport.update();

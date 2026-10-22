@@ -10,41 +10,58 @@ import org.firstinspires.ftc.teamcode.lib.Dashboard;
 import org.firstinspires.ftc.teamcode.lib.VelocityMotor;
 
 /**
- * PLACEHOLDER -- no shooter on the robot yet. A velocity-controlled flywheel plus a gate
- * (CR servo) that pushes a piece into it.
+ * Shooter: one velocity-controlled flywheel, plus a gate that holds balls back from it.
+ * The gate is a CONTINUOUS ROTATION servo (configure it as "Continuous Rotation Servo"):
+ * stopped, it blocks the balls; spinning at GATE_FEED_POWER, it passes them to the wheel.
  *
- * The gate only opens once the flywheel is at speed, so a shot is never fired from a slow
- * wheel. On a bare chassis there is no wheel to measure, so the placeholder pretends to be at
- * speed whenever it is spinning -- that keeps the controls testable.
+ * isFiring() is true only while fire is held AND the wheel is at speed, so the gate never
+ * feeds a slow wheel. After each shot the RPM dips; the gate stops until it recovers,
+ * which spaces the shots out so each one leaves at the same speed.
  *
- * Velocity control matters for a shooter: raw power drops as the battery drains and shots
- * fall short. RPM and PIDF are live-editable in Panels; tune on the real wheel.
+ * The gate is only commanded after PLAY (in update()), so it doesn't move during INIT.
+ *
+ * The flywheel's ENCODER cable must be plugged in (same port number, encoder connector).
+ * Without it the hub thinks the wheel is stopped and drives it at full power.
+ *
+ * Tuning (Panels > Configurables, flywheel spinning, robot on blocks):
+ *   1. VEL_P = 0. Raise VEL_F until actual RPM is close to TARGET_RPM.
+ *   2. Raise VEL_P until it recovers quickly after a shot without oscillating.
+ *   3. Copy the numbers back into this file -- Panels edits are not saved.
  */
 @Configurable
 public class Shooter implements Subsystem {
 
-    public static boolean ENABLED = false;
+    public static boolean ENABLED = true;
     public static String FLYWHEEL_NAME = "shooter";
-    public static String GATE_NAME = "shooterGate";
-    public static boolean FLYWHEEL_REVERSED = false;
-    public static boolean GATE_REVERSED = false;
-    /** goBILDA bare 6000 RPM motor = 28. Change if you gear the flywheel motor. */
+    public static boolean FLYWHEEL_REVERSED = true;
+    /**
+     * Encoder ticks per FLYWHEEL MOTOR output revolution. goBILDA 5202/5203 bare 1:1
+     * (6000 RPM) = 28; 3.7:1 (1620 RPM) = 103.8; 5.2:1 (1150 RPM) = 145.1. Check yours.
+     */
     public static double FLYWHEEL_TICKS_PER_REV = 28;
 
+    /** false = no gate fitted (the transport alone feeds the wheel). */
+    public static boolean USE_GATE = true;
+    public static String GATE_NAME = "shooterGate";
+    /** Flip if the gate spins balls back toward the transport instead of into the wheel. */
+    public static boolean GATE_REVERSED = true;
+    /** Gate speed while feeding, 0 to 1. Lower it if balls go in too close together. */
+    public static double GATE_FEED_POWER = 1.0;
+
     // Live-editable in Panels.
-    public static double TARGET_RPM = 4000;
-    public static double GATE_POWER = 1.0;
-    public static double VEL_P = 200;
+    public static double TARGET_RPM = 2550;
+    public static double VEL_P = 20;
     public static double VEL_I = 0;
     public static double VEL_D = 0;
     public static double VEL_F = 12;
 
-    private final VelocityMotor flywheel;   // null on a bare chassis
-    private final CRServo gate;             // null on a bare chassis
+    private final VelocityMotor flywheel;   // null if missing
+    private final CRServo gate;             // null if missing or USE_GATE is false
     private final String status;
 
     private boolean spinning = false;
     private boolean fireRequested = false;
+    private boolean gateTestOpen = false;
 
     public Shooter(HardwareMap hardwareMap) {
         DcMotorEx motor = ENABLED ? hardwareMap.tryGet(DcMotorEx.class, FLYWHEEL_NAME) : null;
@@ -52,18 +69,18 @@ public class Shooter implements Subsystem {
                 FLYWHEEL_REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD,
                 FLYWHEEL_TICKS_PER_REV);
 
-        gate = ENABLED ? hardwareMap.tryGet(CRServo.class, GATE_NAME) : null;
+        gate = ENABLED && USE_GATE ? hardwareMap.tryGet(CRServo.class, GATE_NAME) : null;
         if (gate != null) {
             gate.setDirection(GATE_REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
         }
 
         if (!ENABLED) {
-            status = "placeholder (disabled)";
-        } else if (flywheel == null || gate == null) {
+            status = "disabled";
+        } else if (flywheel == null || (USE_GATE && gate == null)) {
             status = "MISSING" + (flywheel == null ? " '" + FLYWHEEL_NAME + "'" : "")
-                    + (gate == null ? " '" + GATE_NAME + "'" : "") + " in robot config";
+                    + (USE_GATE && gate == null ? " '" + GATE_NAME + "'" : "") + " in robot config";
         } else {
-            status = "active";
+            status = USE_GATE ? "active (gate)" : "active (fed by transport)";
         }
     }
 
@@ -75,21 +92,30 @@ public class Shooter implements Subsystem {
         return spinning;
     }
 
-    /** Hold true to feed pieces. Ignored until the flywheel is at speed. */
+    /** Hold true to shoot. Ignored until the flywheel is at speed. */
     public void setFire(boolean fire) {
         this.fireRequested = fire;
     }
 
     public boolean atSpeed() {
         if (flywheel == null) {
-            return spinning;   // placeholder: no wheel to measure
+            return spinning;   // no wheel to measure: pretend, so the controls stay testable
         }
         return flywheel.atSpeed();
     }
 
-    /** True while the gate is actually pushing a piece. */
+    /** True while a piece should go into the wheel: gate open, transport feeding. */
     public boolean isFiring() {
         return fireRequested && spinning && atSpeed();
+    }
+
+    /** Run the gate regardless of flywheel speed (TeleOp X, Mechanism Check, auto's timed shooting). */
+    public void setGateTestOpen(boolean open) {
+        this.gateTestOpen = open;
+    }
+
+    public boolean isGateOpen() {
+        return isFiring() || gateTestOpen;
     }
 
     @Override
@@ -99,7 +125,7 @@ public class Shooter implements Subsystem {
             flywheel.setTargetRPM(spinning ? TARGET_RPM : 0);
         }
         if (gate != null) {
-            gate.setPower(isFiring() ? GATE_POWER : 0);
+            gate.setPower(isGateOpen() ? GATE_FEED_POWER : 0);
         }
     }
 
@@ -110,6 +136,7 @@ public class Shooter implements Subsystem {
         dashboard.addData("RPM (actual / target)", flywheel == null ? "-- / " + Math.round(TARGET_RPM)
                 : Math.round(flywheel.getRPM()) + " / " + Math.round(flywheel.getTargetRPM()));
         dashboard.addData("Ready to fire", atSpeed());
+        dashboard.addData("Gate", gate == null ? "--" : isGateOpen() ? "FEEDING" : "STOPPED");
         dashboard.addData("Firing", isFiring());
     }
 
@@ -117,6 +144,7 @@ public class Shooter implements Subsystem {
     public void stop() {
         spinning = false;
         fireRequested = false;
+        gateTestOpen = false;
         update();
     }
 }
