@@ -26,7 +26,7 @@ public class Transport implements Subsystem {
     public static boolean RIGHT_REVERSED = true;
 
     public static double FEED_POWER = 1.0;
-    public static double REVERSE_POWER = -0.6;
+    public static double REVERSE_POWER = -1.0;
     /**
      * true = also run while the intake is on, carrying balls up to the closed shooter gate,
      * where they wait. Right for a robot WITH a gate.

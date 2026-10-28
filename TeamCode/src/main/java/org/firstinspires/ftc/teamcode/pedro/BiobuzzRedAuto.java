@@ -28,18 +28,23 @@ import static com.pedropathing.ivy.groups.Groups.sequential;
 import static com.pedropathing.ivy.pedro.PedroCommands.follow;
 
 /**
- * Red: shoot the preloads, pick up the balls along the bottom wall, come back and shoot again.
+ * Red: shoot the preloads, pick up the balls along the bottom wall, cross to the far side,
+ * shoot again and park.
  *
  *   1  at START: flywheel spins up, then intake + transport + gate run -> shoot
  *   2  flywheel and gate stop; intake + transport keep running (balls wait at the gate)
  *   3  curve (bowing away from the wall) to APPROACH, just before the balls
  *   4  creep slowly along the row to INTAKE_END, intake first, eating the balls one after
  *      another -- then wait INTAKE_WAIT_MS
- *   5  straight back to SHOOT; once there, flywheel spins up, then gate -> shoot again
+ *   5  intake + transport stop; curve to CROSS_START
+ *   6  straight across to CROSS_END
+ *   7  straight to TURN, turning 180 degrees on the way
+ *   8  straight to SHOOT_2; flywheel spins up, then intake + transport + gate -> shoot again
+ *   9  curve to PARK
  *
- * The heading stays HEADING_DEG the whole time. The creep drives in a straight line from
- * APPROACH to INTAKE_END in any direction (it works out forward/sideways from the heading),
- * so moving the balls only needs new numbers.
+ * The heading is HEADING_DEG up to CROSS_END and HEADING_DEG + 180 from TURN on. The creep
+ * drives in a straight line from APPROACH to INTAKE_END in any direction (it works out
+ * forward/sideways from the heading), so moving the balls only needs new numbers.
  *
  * Field, as measured on the robot: (0,0) is the bottom-right corner, the robot starts against
  * the x = 0 wall, and the balls lie along that wall at higher y. Heading 0 = the robot's
@@ -58,22 +63,39 @@ public class BiobuzzRedAuto extends OpMode {
 
     /** Where the robot is placed: pushed against the wall, so y = 9 (8 is inside it). */
     public static double START_X = 9, START_Y = 80;
-    /** Where it comes back to shoot the second time (2" off the wall). */
-    public static double SHOOT_X = 11, SHOOT_Y = 80;
 
-    /** End of the curve, just before the first ball. Assumes the balls start near y = 120. */
+    /** End of the curve, clear of the balls (they lie from (0,138) to (0,144)). */
     public static double APPROACH_X = 15, APPROACH_Y = 128;
     /** Bends the curve up and away from the wall. The robot does not drive through it. */
     public static double CONTROL_X = 36, CONTROL_Y = 104;
     /** End of the creep, where the robot sits after taking the balls. */
     public static double INTAKE_END_X = 11, INTAKE_END_Y = 128;
 
+    /** Start of the crossing, reached by a curve from INTAKE_END that bows through CROSS_CONTROL. */
+    public static double CROSS_START_X = 48, CROSS_START_Y = 110;
+    public static double CROSS_CONTROL_X = 30, CROSS_CONTROL_Y = 118;
+    /** End of the straight crossing to the far side. Kept low to clear the flower at (50, 140). */
+    public static double CROSS_END_X = 108, CROSS_END_Y = 106;
+    /** The robot turns 180 degrees while driving from CROSS_END to here. */
+    public static double TURN_X = 120, TURN_Y = 68;
+    /**
+     * Second shooting spot, tuned on the field. The robot backs in (heading 180) and the
+     * surgical tube sticks ~3" out of its back, so it must stay well off the far wall (x = 133
+     * would put the tube in the wall); low y keeps it clear of the flower at (144, 96).
+     */
+    public static double SHOOT_2_X = 126, SHOOT_2_Y = 67;
+    /** Parking spot, reached by a curve that bows through PARK_CONTROL -- low and to the left,
+     *  so the robot pulls away from the (144, 96) flower before going up. */
+    public static double PARK_X = 90, PARK_Y = 117;
+    public static double PARK_CONTROL_X = 100, PARK_CONTROL_Y = 78;
+
     /** Power while creeping along the balls (0-1). Lower = slower, gentler intake. */
     public static double CREEP_POWER = 0.3;
 
-    public static double SPIN_UP_MS = 3000;
-    /** Long enough for ALL balls to go through. */
-    public static double SHOOT_MS = 7000;
+    public static double SPIN_UP_1_MS = 3000;
+    public static double SPIN_UP_2_MS = 2000;
+    /** Long enough for ALL balls to go through. Raise it if a ball is left behind. */
+    public static double SHOOT_MS = 2000;
     /** Extra time at the end of the row so the last ball gets pulled in. */
     public static double INTAKE_WAIT_MS = 1000;
     /** Safety limits: give up on a drive after this long and carry on. */
@@ -90,9 +112,17 @@ public class BiobuzzRedAuto extends OpMode {
     private Shooter shooter;
 
     private String step = "waiting for PLAY";
+    /** Where the robot really was at the second shot and at the end -- stays on screen. */
+    private String shot2At = "--";
+    private String parkedAt = "--";
 
     private Pose pose(double x, double y) {
         return p.of(x, y, HEADING_DEG);
+    }
+
+    /** Same, but facing the other way (for the far side). */
+    private Pose turnedPose(double x, double y) {
+        return p.of(x, y, HEADING_DEG + 180);
     }
 
     @Override
@@ -124,20 +154,28 @@ public class BiobuzzRedAuto extends OpMode {
     @Override
     public void start() {
         Pose start = pose(START_X, START_Y);
-        Pose shootSpot = pose(SHOOT_X, SHOOT_Y);
         Pose approach = pose(APPROACH_X, APPROACH_Y);
         Pose intakeEnd = pose(INTAKE_END_X, INTAKE_END_Y);
+        Pose crossStart = pose(CROSS_START_X, CROSS_START_Y);
+        Pose crossEnd = pose(CROSS_END_X, CROSS_END_Y);
+        Pose turn = turnedPose(TURN_X, TURN_Y);
+        Pose shootSpot2 = turnedPose(SHOOT_2_X, SHOOT_2_Y);
+        Pose park = turnedPose(PARK_X, PARK_Y);
         follower.setPose(start);
 
         Path toBalls = curve(start, pose(CONTROL_X, CONTROL_Y), approach).constant(start);
-        Path backToShoot = line(intakeEnd, shootSpot).constant(start);
+        Path toCross = curve(intakeEnd, pose(CROSS_CONTROL_X, CROSS_CONTROL_Y), crossStart).constant(start);
+        Path across = line(crossStart, crossEnd).constant(start);
+        Path turnAround = line(crossEnd, turn).linear(crossEnd, turn);
+        Path toShoot2 = line(turn, shootSpot2).constant(turn);
+        Path toPark = curve(shootSpot2, turnedPose(PARK_CONTROL_X, PARK_CONTROL_Y), park).constant(turn);
 
         shooter.setSpinning(true);
         step = "spinning up (1)";
 
         schedule(sequential(
                 // 1. Shoot the preloads.
-                waitMs(SPIN_UP_MS),
+                waitMs(SPIN_UP_1_MS),
                 instant(() -> {
                     intake.setState(Intake.State.INTAKE);
                     transport.setState(Transport.State.FEED);
@@ -173,30 +211,48 @@ public class BiobuzzRedAuto extends OpMode {
                 instant(() -> follower.hold(follower.pose())),
                 waitMs(INTAKE_WAIT_MS),
 
-                // 5. Back to the shooting spot, then spin up and shoot.
+                // 5-7. Cross to the far side, turning around on the last leg.
                 instant(() -> {
                     intake.setState(Intake.State.OFF);
                     transport.setState(Transport.State.OFF);
-                    step = "driving back to shoot";
+                    step = "crossing to the far side";
                 }),
-                driveWithTimeout(backToShoot),
+                driveWithTimeout(toCross),
+                driveWithTimeout(across),
+                instant(() -> step = "turning around"),
+                driveWithTimeout(turnAround),
+
+                // 8. Up to the far wall, then spin up and shoot.
+                instant(() -> step = "driving to shoot (2)"),
+                driveWithTimeout(toShoot2),
                 instant(() -> {
                     follower.hold(follower.pose());
                     shooter.setSpinning(true);
+                    shot2At = where();
                     step = "spinning up (2)";
                 }),
-                waitMs(SPIN_UP_MS),
+                waitMs(SPIN_UP_2_MS),
                 instant(() -> {
+                    intake.setState(Intake.State.INTAKE);
                     transport.setState(Transport.State.FEED);
                     shooter.setGateTestOpen(true);
                     step = "shooting (2)";
                 }),
                 waitMs(SHOOT_MS),
+
+                // 9. Park.
                 instant(() -> {
                     shooter.setGateTestOpen(false);
                     shooter.setSpinning(false);
+                    intake.setState(Intake.State.OFF);
                     transport.setState(Transport.State.OFF);
-                    step = "done -- holding position";
+                    step = "parking";
+                }),
+                driveWithTimeout(toPark),
+                instant(() -> {
+                    follower.hold(follower.pose());
+                    parkedAt = where();
+                    step = "done -- parked";
                 })
         ));
     }
@@ -213,6 +269,12 @@ public class BiobuzzRedAuto extends OpMode {
     private static boolean pastIntakeEnd(Pose pose) {
         double[] dir = creepDirection();
         return (pose.x() - INTAKE_END_X) * dir[0] + (pose.y() - INTAKE_END_Y) * dir[1] >= 0;
+    }
+
+    /** The robot's pose right now, as "x, y, heading" (inches, degrees). */
+    private String where() {
+        Pose pose = follower.pose();
+        return String.format("%.1f, %.1f, %.0f", pose.x(), pose.y(), Math.toDegrees(pose.heading()));
     }
 
     /** Follows a path, but moves on after PATH_TIMEOUT_MS even if the end is never reached. */
@@ -233,6 +295,8 @@ public class BiobuzzRedAuto extends OpMode {
         PoseStorage.save(pose);
 
         dashboard.addData("Step", step);
+        dashboard.addData("Shot 2 from", shot2At);
+        dashboard.addData("Parked at", parkedAt);
         dashboard.showPose(pose);
         intake.report(dashboard);
         transport.report(dashboard);

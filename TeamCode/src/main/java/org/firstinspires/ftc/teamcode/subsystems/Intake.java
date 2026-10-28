@@ -29,7 +29,7 @@ public class Intake implements Subsystem {
 
     // Live-editable in Panels.
     public static double INTAKE_POWER = 0.8;
-    public static double EJECT_POWER = -0.5;
+    public static double EJECT_POWER = -1.0;
 
     public enum State { OFF, INTAKE, EJECT }
 

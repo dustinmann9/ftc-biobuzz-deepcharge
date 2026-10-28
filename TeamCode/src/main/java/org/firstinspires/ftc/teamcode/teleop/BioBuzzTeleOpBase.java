@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.teamcode.drive.DriveTrain;
 import org.firstinspires.ftc.teamcode.lib.Button;
 import org.firstinspires.ftc.teamcode.lib.Dashboard;
+import org.firstinspires.ftc.teamcode.subsystems.FlowerGate;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.Transport;
@@ -19,7 +20,7 @@ import org.firstinspires.ftc.teamcode.subsystems.Transport;
  * Not an OpMode on its own (it's abstract and has no @TeleOp), so it never shows on the DS.
  * The loop never waits for anything.
  *
- * Controls (gamepad 1, or a controller plugged into the Panels browser tab):
+ * DRIVER -- gamepad 1 (or a controller plugged into the Panels browser tab):
  *   left stick        drive (field-centric by default)
  *   right stick X     turn
  *   left trigger      hold for slow mode
@@ -28,11 +29,15 @@ import org.firstinspires.ftc.teamcode.subsystems.Transport;
  *   BACK              switch field-centric / robot-centric
  *   B                 hold to lock in place (Pedro: holds position; backup: brakes)
  *   Y                 backup only: switch velocity / raw power (needs drive encoders!)
+ *
+ * OPERATOR -- gamepad 2:
  *   right bumper      toggle intake + transport (keeps running until pressed again)
  *   left bumper       hold to unjam (intake and transport backwards)
  *   D-pad Up          start shooter flywheel
  *   D-pad Down        stop shooter flywheel
- *   X (hold)          shoot: gate + transport feed balls into the flywheel (no speed check)
+ *   X (hold)          shooter gate only (no speed check). Keep right bumper on to feed more
+ *                     balls up while shooting.
+ *   Y (hold)          rotate the flower gate servo
  *
  * Brake/coast is START_IN_BRAKE_MODE in Panels (DirectMecanumDrive); X is the gate now.
  */
@@ -43,11 +48,13 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
 
     private DriveTrain drive;
     private Dashboard dashboard;
-    private Gamepad pad;
+    private Gamepad pad;        // driver, gamepad 1
+    private Gamepad operator;   // operator, gamepad 2
 
     private Intake intake;
     private Transport transport;
     private Shooter shooter;
+    private FlowerGate flowerGate;
 
     /** Field heading that counts as "away from the driver". Set at start and by button A. */
     private double driverForwardHeading;
@@ -62,11 +69,12 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
     private final Button lockPosition   = buttons.add(() -> pad.b);
     private final Button velocityMode   = buttons.add(() -> pad.y);
 
-    private final Button intakeOn       = buttons.toggle(() -> pad.right_bumper);
-    private final Button eject          = buttons.add(() -> pad.left_bumper);
-    private final Button shooterStart   = buttons.add(() -> pad.dpad_up);
-    private final Button shooterStop    = buttons.add(() -> pad.dpad_down);
-    private final Button shoot          = buttons.add(() -> pad.x);
+    private final Button intakeOn       = buttons.toggle(() -> operator.right_bumper);
+    private final Button eject          = buttons.add(() -> operator.left_bumper);
+    private final Button shooterStart   = buttons.add(() -> operator.dpad_up);
+    private final Button shooterStop    = buttons.add(() -> operator.dpad_down);
+    private final Button shoot          = buttons.add(() -> operator.x);
+    private final Button flower         = buttons.add(() -> operator.y);
 
     @Override
     public void runOpMode() {
@@ -76,6 +84,7 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
         intake = new Intake(hardwareMap);
         transport = new Transport(hardwareMap);
         shooter = new Shooter(hardwareMap);
+        flowerGate = new FlowerGate(hardwareMap);
 
         // INIT: keep the sensors running so heading/pose are live before PLAY.
         while (opModeInInit()) {
@@ -102,11 +111,13 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
         intake.stop();
         transport.stop();
         shooter.stop();
+        flowerGate.stop();
     }
 
-    /** Reads the gamepad once, so everything below sees the same thing. */
+    /** Reads the gamepads once, so everything below sees the same thing. */
     private void readGamepad() {
         pad = dashboard.mergeGamepad(gamepad1);
+        operator = gamepad2;
         buttons.update();
     }
 
@@ -162,9 +173,10 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
             transport.setState(Transport.State.REVERSE);
         } else {
             intake.setState(intakeOn.isOn() ? Intake.State.INTAKE : Intake.State.OFF);
-            // The transport runs while shooting, pushing balls into the spinning gate. With
-            // RUN_WITH_INTAKE it also runs while intaking, carrying balls up to the stopped gate.
-            boolean feed = shoot.down() || (intakeOn.isOn() && Transport.RUN_WITH_INTAKE);
+            // With a gate (RUN_WITH_INTAKE) the transport runs with the intake toggle only, so
+            // balls are carried up to the stopped gate and X opens just the gate. Without one,
+            // the transport is what feeds the wheel, so it runs while X is held.
+            boolean feed = Transport.RUN_WITH_INTAKE ? intakeOn.isOn() : shoot.down();
             transport.setState(feed ? Transport.State.FEED : Transport.State.OFF);
         }
 
@@ -175,10 +187,12 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
         }
         // Held X spins the gate whatever the flywheel speed (the driver's choice).
         shooter.setGateTestOpen(shoot.down());
+        flowerGate.setRotating(flower.down());
 
         intake.update();
         transport.update();
         shooter.update();
+        flowerGate.update();
     }
 
     private void updateDashboard() {
@@ -191,6 +205,7 @@ public abstract class BioBuzzTeleOpBase extends LinearOpMode {
         intake.report(dashboard);
         transport.report(dashboard);
         shooter.report(dashboard);
+        flowerGate.report(dashboard);
 
         dashboard.update();
     }
